@@ -536,6 +536,20 @@ body{font-family:'Noto Sans TC',sans-serif;background:var(--paper);color:var(--i
   </div>
 </div>
 
+<div class="modal-overlay" id="modal-renameTrip">
+  <div class="modal">
+    <div class="modal-title">✏️ 編輯行程資訊</div>
+    <input type="hidden" id="renameIdx">
+    <div class="form-row"><label class="form-label">行程名稱</label><input type="text" class="form-input" id="renameVal" placeholder="例：🗼 東京 2025"></div>
+    <div class="row2">
+      <div class="form-row"><label class="form-label">出發日期</label><input type="date" class="form-input" id="renameStart"></div>
+      <div class="form-row"><label class="form-label">回程日期</label><input type="date" class="form-input" id="renameEnd"></div>
+    </div>
+    <div class="form-row"><label class="form-label">目的地（英文，天氣&地圖用）</label><input type="text" class="form-input" id="renameDest" placeholder="例：Tokyo / Rome / Reykjavik"></div>
+    <div class="modal-actions"><button class="btn-cancel" onclick="closeModals()">取消</button><button class="btn-save" onclick="saveRenameTrip()">儲存更新</button></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-addTrip">
   <div class="modal">
     <div class="modal-title">建立新行程</div>
@@ -661,8 +675,29 @@ function closeSidebar(){document.getElementById('sidebar').classList.remove('ope
 function renderTrips(){
   document.getElementById('tripTabs').innerHTML=trips.map((t,i)=>
     `<button class="trip-tab${i===curTrip?' active':''}" onclick="switchTrip(${i})">
-      ${t.name}<span class="trip-del" onclick="event.stopPropagation();confirmDel('行程「${t.name}」',()=>delTrip(${i}))">✕</span>
+      ${t.name}
+      <span class="trip-del" onclick="event.stopPropagation();openRenameTrip(${i})" title="重新命名">✏️</span>
+      <span class="trip-del" onclick="event.stopPropagation();confirmDel('行程「${t.name}」',()=>delTrip(${i}))">✕</span>
     </button>`).join('');
+}
+function openRenameTrip(i){
+  document.getElementById('renameIdx').value=i;
+  document.getElementById('renameVal').value=trips[i].name;
+  document.getElementById('renameDest').value=trips[i].dest||'';
+  document.getElementById('renameStart').value=trips[i].start||'';
+  document.getElementById('renameEnd').value=trips[i].end||'';
+  document.getElementById('modal-renameTrip').classList.add('open');
+}
+function saveRenameTrip(){
+  const i=parseInt(document.getElementById('renameIdx').value);
+  const name=document.getElementById('renameVal').value.trim();
+  if(!name){alert('請輸入名稱');return;}
+  trips[i].name=name;
+  trips[i].dest=document.getElementById('renameDest').value.trim();
+  trips[i].start=document.getElementById('renameStart').value;
+  trips[i].end=document.getElementById('renameEnd').value;
+  closeModals();renderTrips();renderOverview();updateMaps();autoWeather();
+  showToast('✅ 行程資訊已更新');
 }
 function switchTrip(i){curTrip=i;curDay=0;renderTrips();renderDays();renderTimeline();renderOverview();renderBudget();autoWeather();updateMaps();closeSidebar();}
 function delTrip(i){
@@ -801,7 +836,6 @@ const MAP_QUERIES={Tokyo:'Tokyo+Japan',Rome:'Rome+Italy',Reykjavik:'Reykjavik+Ic
 function updateMaps(){
   const dest=trips[curTrip].dest||'Tokyo';
   const q=MAP_QUERIES[dest]||encodeURIComponent(dest);
-  cons
   const basicSrc=`https://maps.google.com/maps?q=${q}&t=m&z=12&output=embed&iwloc=near`;
   document.getElementById('miniMap').src=basicSrc;
   document.getElementById('fullMap').src=basicSrc;
