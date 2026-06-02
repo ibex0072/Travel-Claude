@@ -348,9 +348,14 @@ body{font-family:'Noto Sans TC',sans-serif;background:var(--paper);color:var(--i
     </div>
     <div class="widget" style="margin-bottom:20px">
       <div class="w-title">輸入設定</div>
-      <div class="form-row"><label class="fl">Apps Script Web App 網址</label><input type="text" class="fi" id="gasUrl" placeholder="https://script.google.com/macros/s/xxx/exec"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-        <button class="add-btn" onclick="saveSHConfig()">💾 儲存網址</button>
+      <div class="form-row"><label class="fl">Apps Script Web App 網址（寫入用）</label><input type="text" class="fi" id="gasUrl" placeholder="https://script.google.com/macros/s/xxx/exec"></div>
+      <div class="form-row"><label class="fl">試算表 ID（讀取用，需開放「知道連結的人可以檢視」）</label><input type="text" class="fi" id="csvId" placeholder="1BxiMVGs2Zt9Ti...（網址 /d/ 後面那段）"></div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;padding:8px;background:var(--cream);border-radius:5px;line-height:1.7">
+        📌 試算表共用設定：右上角「共用」→「知道連結的人」→「檢視者」<br>
+        ✍️ 寫入靠 Apps Script，讀取靠公開 CSV，兩個都填才能雙向同步
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="add-btn" onclick="saveSHConfig()">💾 儲存設定</button>
         <button class="btn-cancel" onclick="testConn()">🔗 測試連線</button>
         <button class="btn-cancel" onclick="syncSheets()">⬆️ 同步到試算表</button>
         <button class="btn-cancel" onclick="loadFromSH()">📥 從試算表讀取</button>
@@ -806,12 +811,14 @@ async function getWx(key,city){
 }
 
 // GOOGLE SHEETS (Apps Script Web App)
-let gasUrl = '';
+let gasUrl = '', csvId = '';
 
 function saveSHConfig(){
   gasUrl = document.getElementById('gasUrl').value.trim();
-  if(!gasUrl){showToast('⚠️ 請填入 Web App 網址');return;}
-  localStorage.setItem('gas_url', gasUrl);
+  csvId = document.getElementById('csvId').value.trim();
+  if(!gasUrl&&!csvId){showToast('⚠️ 請至少填入一個欄位');return;}
+  if(gasUrl) localStorage.setItem('gas_url', gasUrl);
+  if(csvId) localStorage.setItem('csv_id', csvId);
   document.getElementById('shSt').textContent='📊 已設定';
   document.getElementById('connDot').style.background='#d4a853';
   document.getElementById('connMsg').textContent='已儲存，點「測試連線」確認';
@@ -819,43 +826,34 @@ function saveSHConfig(){
 }
 function loadSHConfig(){
   const url = localStorage.getItem('gas_url');
-  if(url){
-    gasUrl = url;
-    const el = document.getElementById('gasUrl');
-    if(el) el.value = url;
-    document.getElementById('shSt').textContent='📊 已設定';
-  }
-}
-function gasJsonp(url, cbName){
-  return new Promise(function(resolve, reject){
-    var sc = document.createElement('script');
-    window[cbName] = function(data){ resolve(data); delete window[cbName]; sc.remove(); };
-    sc.onerror = function(){ reject(new Error('JSONP failed')); sc.remove(); };
-    sc.src = url + '&callback=' + cbName;
-    document.head.appendChild(sc);
-    setTimeout(function(){ reject(new Error('timeout')); }, 8000);
-  });
+  const cid = localStorage.getItem('csv_id');
+  if(url){ gasUrl=url; const el=document.getElementById('gasUrl'); if(el)el.value=url; }
+  if(cid){ csvId=cid; const el=document.getElementById('csvId'); if(el)el.value=cid; }
+  if(url||cid) document.getElementById('shSt').textContent='📊 已設定';
 }
 async function gasPost(payload){
   if(!gasUrl) return false;
   try{
-    // Use no-cors for write (fire and forget)
     await fetch(gasUrl, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body:JSON.stringify(payload)});
     return true;
   }catch(e){console.warn('GAS post error',e);return false;}
 }
 async function testConn(){
   if(!gasUrl){showToast('⚠️ 請先填入 Web App 網址');return;}
+  if(!csvId){showToast('⚠️ 請先填入試算表 ID');return;}
   showToast('⟳ 測試連線中...');
   try{
-    const data = await gasJsonp(gasUrl+'?sheet=itinerary&action=ping', '_gasTest');
-    document.getElementById('connDot').style.background='#6b8f71';
-    document.getElementById('connMsg').textContent='✅ 連線成功！Apps Script 運作正常';
-    document.getElementById('shSt').textContent='📊 已連線';
-    showToast('✅ 連線成功');
+    const url='https://docs.google.com/spreadsheets/d/'+csvId+'/gviz/tq?tqx=out:csv&sheet=itinerary';
+    const r = await fetch(url);
+    if(r.ok){
+      document.getElementById('connDot').style.background='#6b8f71';
+      document.getElementById('connMsg').textContent='✅ 連線成功！試算表可正常讀取';
+      document.getElementById('shSt').textContent='📊 已連線';
+      showToast('✅ 連線成功');
+    }else{throw new Error('HTTP '+r.status);}
   }catch(e){
     document.getElementById('connDot').style.background='#c0392b';
-    document.getElementById('connMsg').textContent='❌ 連線失敗：請確認已重新部署且存取設為「所有人」';
+    document.getElementById('connMsg').textContent='❌ 連線失敗：請確認試算表已設為「知道連結的人可以檢視」';
     showToast('❌ 連線失敗');
   }
 }
@@ -869,21 +867,41 @@ async function syncSheets(){
   await gasPost({sheet:'itinerary',action:'write',rows:evRows});
   await gasPost({sheet:'budget',action:'write',rows:bRows});
   document.getElementById('syncSt').textContent='同步：'+new Date().toLocaleTimeString('zh-TW');
-  showToast('✅ 已送出同步，共'+evRows.length+'筆（稍候查看試算表確認）');
+  showToast('✅ 已送出同步，共'+evRows.length+'筆');
+}
+function parseCSV(text){
+  var nl=String.fromCharCode(10);
+  var lines=text.trim().split(nl);
+  return lines.map(function(line){
+    var result=[],cur="",inQ=false;
+    for(var i=0;i<line.length;i++){
+      var c=line[i];
+      if(c==='"'){inQ=!inQ;}
+      else if(c===","&&!inQ){result.push(cur.replace(/^"|"$/g,"").trim());cur="";}
+      else cur+=c;
+    }
+    result.push(cur.replace(/^"|"$/g,"").trim());
+    return result;
+  });
 }
 async function loadFromSH(){
-  if(!gasUrl){showToast('⚠️ 請先填入 Web App 網址');return;}
+  if(!csvId){showToast('⚠️ 請先填入試算表 ID');return;}
   showToast('📥 讀取中...');
   try{
-    const rows = await gasJsonp(gasUrl+'?sheet=itinerary', '_gasLoad');
-    if(!Array.isArray(rows)||rows.length<2){showToast('📋 試算表尚無資料');return;}
+    const url='https://docs.google.com/spreadsheets/d/'+csvId+'/gviz/tq?tqx=out:csv&sheet=itinerary';
+    const r = await fetch(url);
+    if(!r.ok) throw new Error('HTTP '+r.status+' — 請確認試算表已開放「知道連結的人可以檢視」');
+    const text = await r.text();
+    const rows = parseCSV(text);
+    if(rows.length<2){showToast('📋 試算表尚無資料，請先同步');return;}
     trips[curTrip].days.forEach(d=>d.events=[]);
     rows.slice(1).forEach(function(row){
+      if(!row[5])return;
       const id=row[0],dayIdx=row[2],time=row[3],cat=row[4],name=row[5],note=row[6],hasCost=row[7],amount=row[8],currency=row[9];
       const di=Math.max(0,(parseInt(dayIdx)||1)-1);
       while(trips[curTrip].days.length<=di)
         trips[curTrip].days.push({label:'第'+(trips[curTrip].days.length+1)+'天',date:'—',events:[]});
-      trips[curTrip].days[di].events.push({id:parseInt(id)||nid++,time:time||'00:00',cat:cat||'other',name:name||'',note:note||'',hasCost:hasCost==1||hasCost=='1',amount:parseFloat(amount)||0,currency:currency||'JPY'});
+      trips[curTrip].days[di].events.push({id:parseInt(id)||nid++,time:time||'00:00',cat:cat||'other',name:name||'',note:note||'',hasCost:hasCost=='1'||hasCost=='true'||hasCost==1,amount:parseFloat(amount)||0,currency:currency||'JPY'});
     });
     renderDays();renderTimeline();renderOverview();renderBudget();
     showToast('✅ 已讀取 '+(rows.length-1)+' 筆資料');
