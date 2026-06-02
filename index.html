@@ -183,6 +183,9 @@ body{font-family:'Noto Sans TC',sans-serif;background:var(--paper);color:var(--i
 .cf-modal{background:var(--paper);border-radius:12px;padding:24px;width:340px;max-width:92vw;animation:mIn .3s cubic-bezier(.34,1.56,.64,1)}
 .cf-title{font-family:'Playfair Display',serif;font-size:17px;font-weight:700;margin-bottom:8px}
 .cf-msg{font-size:12px;color:var(--muted);margin-bottom:18px;line-height:1.6}
+.lib-item{padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--cream);display:flex;align-items:center}
+.lib-item:last-child{border:none}
+.lib-item:hover{background:var(--cream)}
 .toast{position:fixed;bottom:70px;right:22px;background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:8px;font-size:12px;z-index:2000;transform:translateY(50px);opacity:0;transition:all .3s cubic-bezier(.34,1.56,.64,1);box-shadow:0 4px 16px rgba(26,22,18,.2)}
 .toast.show{transform:translateY(0);opacity:1}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--sand);border-radius:2px}
@@ -205,6 +208,7 @@ body{font-family:'Noto Sans TC',sans-serif;background:var(--paper);color:var(--i
   <div class="nav-item" onclick="showPage('sheets',this)">📊 Google Sheets</div>
   <div class="nav-item" onclick="openM('weather')">🌤 天氣設定</div>
   <div class="nav-item" onclick="toggleDark()">🌙 深色模式</div>
+  <div class="nav-item" onclick="showPage('library',this)">📚 行程記憶庫</div>
   <div class="nav-item" onclick="openM('currency')">💱 匯率換算</div>
   <div class="nav-item" onclick="openM('split')">🧮 分帳計算</div>
   <div class="sb-footer">
@@ -407,6 +411,23 @@ function doPost(e) {
   </div>
 </main>
 
+  <!-- LIBRARY PAGE -->
+  <div class="page" id="page-library">
+    <div class="sec-hdr" style="margin-bottom:18px">
+      <div class="sec-title" style="font-size:24px">📚 行程記憶庫</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="add-btn" onclick="syncLibraryFromSheets().then(renderLibrary)">☁️ 從試算表讀取</button>
+        <button class="btn-cancel" onclick="syncLibraryToSheets().then(()=>showToast('✅ 已同步到試算表'))">⬆️ 同步到試算表</button>
+        <button class="btn-cancel" onclick="clearLibrary()">🗑 清空</button>
+      </div>
+    </div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;padding:12px;background:var(--cream);border-radius:8px;line-height:1.8">
+      新增行程項目時<strong>自動儲存</strong>到記憶庫，並同步到 Google 試算表 <code>library</code> 工作表。<br>
+      下次新增時，在名稱欄輸入關鍵字即可快速帶入 ✅ 跨裝置同步
+    </div>
+    <div id="libraryList" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px"></div>
+  </div>
+
 <nav class="bottom-nav">
   <button class="bn-item active" onclick="showPageM('timeline',this)"><div class="bn-icon">📅</div><div>時間軸</div></button>
   <button class="bn-item" onclick="showPageM('overview',this)"><div class="bn-icon">🗾</div><div>全覽</div></button>
@@ -451,7 +472,11 @@ function doPost(e) {
       <div class="form-row"><label class="fl">時間（選填）</label><input type="time" class="fi" id="fTime"></div>
       <div class="form-row"><label class="fl">類別</label><select class="fi" id="fCat"><option value="transport">✈️ 交通</option><option value="food">🍽 餐飲</option><option value="stay">🏨 住宿</option><option value="sight" selected>🎡 景點</option><option value="other">📦 其他</option></select></div>
     </div>
-    <div class="form-row"><label class="fl">名稱</label><input type="text" class="fi" id="fName" placeholder="例：淺草寺參觀"></div>
+    <div class="form-row" style="position:relative">
+      <label class="fl">名稱</label>
+      <input type="text" class="fi" id="fName" placeholder="例：淺草寺參觀" oninput="onNameInputFix()" autocomplete="off">
+      <div id="libSuggest" style="position:absolute;top:100%;left:0;right:0;background:var(--white);border:1.5px solid var(--sand);border-radius:0 0 7px 7px;z-index:100;max-height:180px;overflow-y:auto;display:block"></div>
+    </div>
     <div class="form-row"><label class="fl">備註（選填）</label><input type="text" class="fi" id="fNote" placeholder="票價、訂位資訊..."></div>
     <div class="form-row"><label class="fl">Google Maps 網址（選填）</label><input type="text" class="fi" id="fMapUrl" placeholder="https://maps.google.com/..."></div>
     <div class="form-row"><label class="fl">所屬天數</label><select class="fi" id="fDayIdx"></select></div>
@@ -582,8 +607,25 @@ function renderTrips(){
     `<button class="trip-tab${i===curTrip?' active':''}" onclick="switchTrip(${i})">
       ${t.name}
       <span class="t-del" onclick="event.stopPropagation();openRename(${i})" title="編輯">✏️</span>
+      <span class="t-del" onclick="event.stopPropagation();copyTrip(${i})" title="複製行程">⧉</span>
       <span class="t-del" onclick="event.stopPropagation();confirmDel('行程「'+trips[${i}].name+'」',()=>delTrip(${i}))">✕</span>
     </button>`).join('');
+}
+function copyTrip(i){
+  const src=trips[i];
+  const copy=JSON.parse(JSON.stringify(src));
+  copy.id=nid++;
+  copy.name=src.name+' (複製)';
+  // Reset event ids
+  copy.days.forEach(function(d){
+    d.events.forEach(function(ev){ev.id=nid++;});
+  });
+  trips.push(copy);
+  // Copy budget
+  const srcBudget=budgetItemsMap[src.id]||[];
+  budgetItemsMap[copy.id]=srcBudget.map(function(b){return Object.assign({},b,{id:nid++});});
+  renderTrips();switchTrip(trips.length-1);
+  showToast('⧉ 已複製行程「'+src.name+'」');
 }
 function switchTrip(i){curTrip=i;curDay=0;recalcDayDates();renderTrips();renderDays();renderTimeline();renderOverview();renderBudget();autoWeather();updateMaps();closeSB();}
 function delTrip(i){
@@ -660,7 +702,9 @@ function renderTimeline(){
       '<div class="ev-time">'+(ev.time||'—')+'</div><div class="ev-icon">'+c.i+'</div>'+
       '<div class="ev-body"><div class="ev-name">'+ev.name+'</div>'+(ev.note?'<div class="ev-note">'+ev.note+'</div>':'')+
       mh+'<div class="ev-meta"><span class="ev-tag '+c.cls+'">'+c.l+'</span>'+ch+'</div></div>'+
-      '<div class="ev-acts"><button class="ib" onclick="editEvent('+ev.id+')">✏️</button>'+
+      '<div class="ev-acts">'+
+      '<button class="ib" onclick="copyEvent('+ev.id+')" title="複製">⧉</button>'+
+      '<button class="ib" onclick="editEvent('+ev.id+')">✏️</button>'+
       '<button class="ib del" onclick="delEventConfirm('+ev.id+')">🗑</button></div></div>';
   }).join('');
   updateStats();
@@ -756,6 +800,7 @@ function saveEvent(){
   const targetDay=ev.dayIdx>=0&&ev.dayIdx<trips[curTrip].days.length?ev.dayIdx:curDay;
   trips[curTrip].days[targetDay].events.push(ev);
   if(targetDay!==curDay){curDay=targetDay;renderDays();}
+  saveToLibrary(ev);
   closeM();renderTimeline();renderOverview();renderBudget();showToast(eid?'✏️ 已更新':'✅ 已新增');
 }
 function delEvent(id){
@@ -971,8 +1016,9 @@ async function syncSheets(){
     });
   });
   await gasPost({sheet:'budget',action:'write',rows:allBRows});
+  await syncLibraryToSheets();
   document.getElementById('syncSt').textContent='同步：'+new Date().toLocaleTimeString('zh-TW');
-  showToast('✅ 同步完成');
+  showToast('✅ 同步完成（含記憶庫）');
 }
 function parseCSV(text){
   var nl=String.fromCharCode(10);
@@ -1062,6 +1108,8 @@ async function loadFromSH(){
     recalcDayDates();
     renderTrips();renderDays();renderTimeline();renderOverview();renderBudget();
     updateMaps();autoWeather();
+    // Also sync library
+    await syncLibraryFromSheets();
     showToast('✅ 已讀取試算表資料');
   }catch(e){showToast('❌ 讀取失敗：'+e.message);}
 }
@@ -1078,6 +1126,7 @@ function showPage(name,el){
   if(el)el.classList.add('active');
   if(name==='overview')renderOverview();
   if(name==='budget')renderBudget();
+  if(name==='library')renderLibrary();
   closeSB();
 }
 function showPageM(name,el){
@@ -1111,6 +1160,133 @@ function delDayConfirm(di){confirmDel("第"+(di+1)+"天",()=>delDay(di));}
 function addEvForDay(di){curDay=di;renderDays();openM("addEvent");}
 function toggleOvDay(h){var b=h.nextElementSibling;b.style.display=b.style.display==="none"?"block":"none";}
 
+
+
+// EVENT LIBRARY - synced with Google Sheets + localStorage fallback
+function saveToLibrary(ev){
+  if(!ev.name) return;
+  var lib=JSON.parse(localStorage.getItem('ev_library')||'[]');
+  if(lib.find(function(x){return x.name===ev.name;})) return;
+  var item={name:ev.name,cat:ev.cat||'other',note:ev.note||'',mapUrl:ev.mapUrl||''};
+  lib.unshift(item);
+  if(lib.length>200) lib=lib.slice(0,200);
+  localStorage.setItem('ev_library',JSON.stringify(lib));
+  // Also write to Sheets if connected
+  if(gasUrl){
+    gasPost({sheet:'library',action:'append',row:[item.name,item.cat,item.note,item.mapUrl]});
+  }
+}
+function getLibrary(){
+  return JSON.parse(localStorage.getItem('ev_library')||'[]');
+}
+async function syncLibraryFromSheets(){
+  if(!csvId) return;
+  try{
+    var rows=await fetchCSV('library');
+    if(rows.length<2) return;
+    var items=rows.slice(1).filter(function(r){return r[0];}).map(function(r){
+      return {name:r[0],cat:r[1]||'other',note:r[2]||'',mapUrl:r[3]||''};
+    });
+    // Merge with local - sheets takes priority, dedupe by name
+    var local=JSON.parse(localStorage.getItem('ev_library')||'[]');
+    var names=new Set(items.map(function(x){return x.name;}));
+    local.forEach(function(x){if(!names.has(x.name)){items.push(x);}});
+    localStorage.setItem('ev_library',JSON.stringify(items));
+    showToast('📚 記憶庫已從試算表同步（'+items.length+'筆）');
+  }catch(e){console.warn('Library sync failed',e);}
+}
+async function syncLibraryToSheets(){
+  if(!gasUrl) return;
+  var lib=getLibrary();
+  var rows=lib.map(function(x){return [x.name,x.cat,x.note||'',x.mapUrl||''];});
+  await gasPost({sheet:'library',action:'write',rows:rows});
+}
+function searchLibrary(kw){
+  if(!kw||kw.length<1) return [];
+  var lib=getLibrary();
+  return lib.filter(function(x){return x.name.toLowerCase().includes(kw.toLowerCase());}).slice(0,6);
+}
+function applyLibItem(item){
+  document.getElementById('fName').value=item.name;
+  document.getElementById('fCat').value=item.cat||'sight';
+  document.getElementById('fNote').value=item.note||'';
+  document.getElementById('fMapUrl').value=item.mapUrl||'';
+  document.getElementById('libSuggest').innerHTML='';
+}
+function onNameInput(){
+  var kw=document.getElementById('fName').value;
+  var results=searchLibrary(kw);
+  var el=document.getElementById('libSuggest');
+  if(!results.length){el.innerHTML='';return;}
+  el.innerHTML=results.map(function(r){
+    return '<div class="lib-item" onclick="applyLibItem('+JSON.stringify(JSON.stringify(r))+'|0)">'+
+      '<span class="ev-tag tag-'+r.cat+'" style="margin-right:6px">'+
+      (r.cat==='transport'?'交通':r.cat==='food'?'餐飲':r.cat==='stay'?'住宿':r.cat==='sight'?'景點':'其他')+
+      '</span>'+r.name+'</div>';
+  }).join('');
+}
+function onNameInputFix(){
+  var kw=document.getElementById('fName').value;
+  var results=searchLibrary(kw);
+  var el=document.getElementById('libSuggest');
+  if(!results.length){el.innerHTML='';return;}
+  el.innerHTML=results.map(function(r,ri){
+    return '<div class="lib-item" onclick="applyLib('+ri+')">'+
+      '<span class="ev-tag tag-'+(r.cat||'other')+'" style="margin-right:6px">'+
+      {transport:'交通',food:'餐飲',stay:'住宿',sight:'景點',other:'其他'}[r.cat||'other']+
+      '</span>'+r.name+(r.note?'<span style="color:var(--muted);font-size:10px;margin-left:4px">'+r.note+'</span>':'')+'</div>';
+  }).join('');
+  window._libResults=results;
+}
+function applyLib(i){
+  var item=window._libResults[i];
+  if(!item)return;
+  document.getElementById('fName').value=item.name;
+  document.getElementById('fCat').value=item.cat||'sight';
+  document.getElementById('fNote').value=item.note||'';
+  document.getElementById('fMapUrl').value=item.mapUrl||'';
+  document.getElementById('libSuggest').innerHTML='';
+}
+
+// COPY EVENT
+function copyEvent(id){
+  var src=trips[curTrip].days.flatMap(function(d){return d.events;}).find(function(e){return e.id===id;});
+  if(!src)return;
+  var copy=Object.assign({},src,{id:nid++,name:src.name+' (複製)'});
+  trips[curTrip].days[curDay].events.push(copy);
+  renderTimeline();renderOverview();
+  showToast('⧉ 已複製「'+src.name+'」');
+}
+
+
+function renderLibrary(){
+  var lib=getLibrary();
+  var el=document.getElementById('libraryList');
+  if(!lib.length){
+    el.innerHTML='<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;font-size:13px">尚無記憶資料<br><small>新增行程項目後會自動儲存</small></div>';
+    return;
+  }
+  el.innerHTML=lib.map(function(item,i){
+    return '<div style="background:var(--white);border:1.5px solid var(--cream);border-radius:9px;padding:12px 14px;display:flex;align-items:flex-start;gap:8px">'+
+      '<div style="flex:1"><div style="font-size:13px;font-weight:500;margin-bottom:4px">'+item.name+'</div>'+
+      '<span class="ev-tag tag-'+(item.cat||'other')+'">'+(item.cat==='transport'?'交通':item.cat==='food'?'餐飲':item.cat==='stay'?'住宿':item.cat==='sight'?'景點':'其他')+'</span>'+
+      (item.note?'<div style="font-size:11px;color:var(--muted);margin-top:4px">'+item.note+'</div>':'')+
+      '</div>'+
+      '<button class="ib del" onclick="delLibItem('+i+')" title="刪除">🗑</button>'+
+      '</div>';
+  }).join('');
+}
+function delLibItem(i){
+  var lib=getLibrary();lib.splice(i,1);
+  localStorage.setItem('ev_library',JSON.stringify(lib));
+  renderLibrary();showToast('🗑 已從記憶庫刪除');
+}
+function clearLibrary(){
+  confirmDel('整個記憶庫',function(){
+    localStorage.removeItem('ev_library');
+    renderLibrary();showToast('🗑 已清空記憶庫');
+  });
+}
 
 // DRAG AND DROP
 var dragSrcId=null;
