@@ -278,7 +278,7 @@ body{font-family:'Noto Sans TC',sans-serif;background:var(--paper);color:var(--i
 
   <div class="page" id="page-budget">
     <div class="sec-hdr" style="margin-bottom:18px">
-      <div class="sec-title" style="font-size:24px">預算管理</div>
+      <div class="sec-title" style="font-size:24px">預算管理 <span id="budgetTripLabel"></span></div>
       <button class="add-btn" onclick="openM('addBudget')">+ 新增費用</button>
     </div>
     <div class="bc" id="bc"></div>
@@ -556,12 +556,20 @@ let trips=[
   {id:2,name:'🍕 羅馬 2026',dest:'Rome',start:'2026-03-10',end:'2026-03-17',days:[{label:'第 1 天',date:'03/10',events:[]}]},
   {id:3,name:'🌌 冰島 2026',dest:'Reykjavik',start:'2026-08-20',end:'2026-08-27',days:[{label:'第 1 天',date:'08/20',events:[]}]}
 ];
-let budgetItems=[
-  {id:1,name:'來回機票 × 4',amount:64000,currency:'TWD',cat:'transport'},
-  {id:2,name:'新宿 Granbell 8晚',amount:64000,currency:'JPY',cat:'stay'},
-  {id:3,name:'每日餐費（預估）',amount:16000,currency:'JPY',cat:'food'},
-  {id:4,name:'門票費用（預估）',amount:8500,currency:'JPY',cat:'sight'}
-];
+// budgetItems is now per-trip: {tripId: [...items]}
+let budgetItemsMap={
+  1:[
+    {id:1,name:'來回機票 × 4',amount:64000,currency:'TWD',cat:'transport'},
+    {id:2,name:'新宿 Granbell 8晚',amount:64000,currency:'JPY',cat:'stay'},
+    {id:3,name:'每日餐費（預估）',amount:16000,currency:'JPY',cat:'food'},
+    {id:4,name:'門票費用（預估）',amount:8500,currency:'JPY',cat:'sight'}
+  ]
+};
+function getBudgetItems(){
+  const tid=trips[curTrip].id;
+  if(!budgetItemsMap[tid]) budgetItemsMap[tid]=[];
+  return budgetItemsMap[tid];
+}
 let curTrip=0,curDay=0,nid=50,wxKey='',gcCID='',gcSID='',gapiOK=false;
 
 // SIDEBAR
@@ -792,6 +800,9 @@ function editEvOv(id){const di=trips[curTrip].days.findIndex(d=>d.events.some(e=
 
 // BUDGET
 function renderBudget(){
+  const lbl=document.getElementById('budgetTripLabel');
+  if(lbl) lbl.textContent=trips[curTrip]?trips[curTrip].name:'';
+  const budgetItems=getBudgetItems();
   const ae=trips[curTrip].days.flatMap(d=>d.events).filter(e=>e.hasCost&&e.amount>0);
   const jB=budgetItems.filter(b=>b.currency==='JPY').reduce((s,b)=>s+Number(b.amount),0);
   const jE=ae.filter(e=>e.currency==='JPY').reduce((s,e)=>s+Number(e.amount),0);
@@ -821,7 +832,9 @@ function renderBudget(){
 }
 function saveBudget(){
   const name=document.getElementById('bName').value.trim();if(!name){alert('請輸入名稱');return;}
-  budgetItems.push({id:nid++,name,amount:Number(document.getElementById('bAmt').value)||0,currency:document.getElementById('bCurr').value,cat:document.getElementById('bCat').value});
+  const tid=trips[curTrip].id;
+  if(!budgetItemsMap[tid]) budgetItemsMap[tid]=[];
+  budgetItemsMap[tid].push({id:nid++,name,amount:Number(document.getElementById('bAmt').value)||0,currency:document.getElementById('bCurr').value,cat:document.getElementById('bCat').value});
   closeM();renderBudget();showToast('💴 費用已記錄');
 }
 
@@ -950,8 +963,14 @@ async function syncSheets(){
   );
   await gasPost({sheet:'itinerary',action:'write',rows:evRows});
   // Sync budget
-  const bRows = budgetItems.map(b=>[b.id,trips[curTrip].id,b.name,b.amount,b.currency,b.cat]);
-  await gasPost({sheet:'budget',action:'write',rows:bRows});
+  // Sync all trips' budgets
+  const allBRows=[];
+  Object.keys(budgetItemsMap).forEach(function(tid){
+    budgetItemsMap[tid].forEach(function(b){
+      allBRows.push([b.id,tid,b.name,b.amount,b.currency,b.cat]);
+    });
+  });
+  await gasPost({sheet:'budget',action:'write',rows:allBRows});
   document.getElementById('syncSt').textContent='同步：'+new Date().toLocaleTimeString('zh-TW');
   showToast('✅ 同步完成');
 }
@@ -970,27 +989,80 @@ function parseCSV(text){
     return result;
   });
 }
+async function fetchCSV(sheet){
+  const url='https://docs.google.com/spreadsheets/d/'+csvId+'/gviz/tq?tqx=out:csv&sheet='+encodeURIComponent(sheet);
+  const r=await fetch(url);
+  if(!r.ok) throw new Error('HTTP '+r.status+' — 請確認試算表已開放「知道連結的人可以檢視」');
+  const text=await r.text();
+  return parseCSV(text);
+}
 async function loadFromSH(){
   if(!csvId){showToast('⚠️ 請先填入試算表 ID');return;}
   showToast('📥 讀取中...');
   try{
-    const url='https://docs.google.com/spreadsheets/d/'+csvId+'/gviz/tq?tqx=out:csv&sheet=itinerary';
-    const r = await fetch(url);
-    if(!r.ok) throw new Error('HTTP '+r.status+' — 請確認試算表已開放「知道連結的人可以檢視」');
-    const text = await r.text();
-    const rows = parseCSV(text);
-    if(rows.length<2){showToast('📋 試算表尚無資料，請先同步');return;}
-    trips[curTrip].days.forEach(d=>d.events=[]);
-    rows.slice(1).forEach(function(row){
-      if(!row[5])return;
-      const id=row[0],dayIdx=row[2],time=row[3],cat=row[4],name=row[5],note=row[6],hasCost=row[7],amount=row[8],currency=row[9];
-      const di=Math.max(0,(parseInt(dayIdx)||1)-1);
-      while(trips[curTrip].days.length<=di)
-        trips[curTrip].days.push({label:'第'+(trips[curTrip].days.length+1)+'天',date:'—',events:[]});
-      trips[curTrip].days[di].events.push({id:parseInt(id)||nid++,time:time||'00:00',cat:cat||'other',name:name||'',note:note||'',hasCost:hasCost=='1'||hasCost=='true'||hasCost==1,amount:parseFloat(amount)||0,currency:currency||'JPY'});
+    // 1. Load trips
+    const tripRows=await fetchCSV('trips');
+    if(tripRows.length>=2){
+      trips=tripRows.slice(1).filter(r=>r[0]&&r[1]).map(function(r){
+        return {
+          id:parseInt(r[0])||nid++,
+          name:r[1]||'行程',
+          dest:r[2]||'',
+          start:r[3]||'',
+          end:r[4]||'',
+          days:[]
+        };
+      });
+      if(!trips.length) trips=[{id:1,name:'✈️ 新行程',dest:'',start:'',end:'',days:[{label:'第 1 天',date:'—',events:[]}]}];
+      curTrip=0;curDay=0;
+    }
+
+    // 2. Load itinerary - assign events to trips
+    const evRows=await fetchCSV('itinerary');
+    if(evRows.length>=2){
+      evRows.slice(1).forEach(function(row){
+        if(!row[5])return;
+        const tripId=parseInt(row[1])||1;
+        const t=trips.find(function(x){return x.id===tripId;})||trips[0];
+        const di=Math.max(0,(parseInt(row[2])||1)-1);
+        while(t.days.length<=di){
+          const n=t.days.length+1;
+          t.days.push({label:'第 '+n+' 天',date:calcDayDate(t.start,t.days.length),events:[]});
+        }
+        t.days[di].events.push({
+          id:parseInt(row[0])||nid++,
+          time:row[3]||'',
+          cat:row[4]||'other',
+          name:row[5]||'',
+          note:row[6]||'',
+          hasCost:row[7]=='1'||row[7]=='true',
+          amount:parseFloat(row[8])||0,
+          currency:row[9]||'JPY',
+          mapUrl:row[10]||''
+        });
+      });
+    }
+
+    // Ensure each trip has at least 1 day
+    trips.forEach(function(t){
+      if(!t.days.length) t.days.push({label:'第 1 天',date:calcDayDate(t.start,0),events:[]});
     });
-    renderDays();renderTimeline();renderOverview();renderBudget();
-    showToast('✅ 已讀取 '+(rows.length-1)+' 筆資料');
+
+    // 3. Load budget
+    const bRows=await fetchCSV('budget');
+    if(bRows.length>=2){
+      budgetItemsMap={};
+      bRows.slice(1).filter(function(r){return r[2];}).forEach(function(r){
+        var tid=parseInt(r[1])||1;
+        if(!budgetItemsMap[tid]) budgetItemsMap[tid]=[];
+        budgetItemsMap[tid].push({id:parseInt(r[0])||nid++,name:r[2],amount:parseFloat(r[3])||0,currency:r[4]||'JPY',cat:r[5]||'other'});
+      });
+    }
+
+    recalcDayDates();
+    renderTrips();renderDays();renderTimeline();renderOverview();renderBudget();
+    updateMaps();autoWeather();
+    showToast('✅ 已讀取試算表資料');
   }catch(e){showToast('❌ 讀取失敗：'+e.message);}
 }
 
@@ -1034,7 +1106,7 @@ function showToast(msg){const t=document.getElementById('toast');t.textContent=m
 const ks=document.createElement('style');ks.textContent='@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}';document.head.appendChild(ks);
 
 // OVERVIEW TOGGLE
-function delBudgetConfirm(id){var b=budgetItems.find(x=>x.id===id);if(!b)return;confirmDel(b.name,function(){budgetItems=budgetItems.filter(x=>x.id!==id);renderBudget();});}
+function delBudgetConfirm(id){var items=getBudgetItems();var b=items.find(x=>x.id===id);if(!b)return;confirmDel(b.name,function(){var tid=trips[curTrip].id;budgetItemsMap[tid]=budgetItemsMap[tid].filter(x=>x.id!==id);renderBudget();});}
 function delDayConfirm(di){confirmDel("第"+(di+1)+"天",()=>delDay(di));}
 function addEvForDay(di){curDay=di;renderDays();openM("addEvent");}
 function toggleOvDay(h){var b=h.nextElementSibling;b.style.display=b.style.display==="none"?"block":"none";}
@@ -1062,7 +1134,15 @@ function initDrag(){
 }
 
 // INIT
-loadSHConfig();recalcDayDates();renderTrips();renderDays();renderTimeline();renderBudget();initCL();calcCurr();updateMaps();autoWeather();
+loadSHConfig();
+recalcDayDates();
+renderTrips();renderDays();renderTimeline();renderBudget();initCL();calcCurr();updateMaps();autoWeather();
+// 開啟時自動讀取試算表資料
+if(csvId){
+  setTimeout(function(){
+    loadFromSH().catch(function(){});
+  }, 800);
+}
 </script>
 </body>
 </html>
