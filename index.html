@@ -370,8 +370,15 @@ body{font-family:'Noto Sans TC',sans-serif;background:var(--paper);color:var(--i
   var sheet = SpreadsheetApp.getActiveSpreadsheet()
     .getSheetByName(e.parameter.sheet || 'itinerary');
   var data = sheet.getDataRange().getValues();
+  var json = JSON.stringify(data);
+  var cb = e.parameter.callback;
+  if (cb) {
+    return ContentService
+      .createTextOutput(cb + '(' + json + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
   return ContentService
-    .createTextOutput(JSON.stringify(data))
+    .createTextOutput(json)
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -819,54 +826,60 @@ function loadSHConfig(){
     document.getElementById('shSt').textContent='📊 已設定';
   }
 }
-async function testConn(){
-  if(!gasUrl){showToast('⚠️ 請先填入 Web App 網址');return;}
-  showToast('⟳ 測試連線中...');
-  try{
-    const r = await fetch(gasUrl+'?sheet=itinerary');
-    if(r.ok){
-      document.getElementById('connDot').style.background='#6b8f71';
-      document.getElementById('connMsg').textContent='✅ 連線成功！Apps Script 運作正常';
-      document.getElementById('shSt').textContent='📊 已連線';
-      showToast('✅ 連線成功');
-    }else{throw new Error('HTTP '+r.status);}
-  }catch(e){
-    document.getElementById('connDot').style.background='#c0392b';
-    document.getElementById('connMsg').textContent='❌ 連線失敗：'+e.message;
-    showToast('❌ 連線失敗，請確認網址');
-  }
+function gasJsonp(url, cbName){
+  return new Promise(function(resolve, reject){
+    var sc = document.createElement('script');
+    window[cbName] = function(data){ resolve(data); delete window[cbName]; sc.remove(); };
+    sc.onerror = function(){ reject(new Error('JSONP failed')); sc.remove(); };
+    sc.src = url + '&callback=' + cbName;
+    document.head.appendChild(sc);
+    setTimeout(function(){ reject(new Error('timeout')); }, 8000);
+  });
 }
 async function gasPost(payload){
   if(!gasUrl) return false;
   try{
-    await fetch(gasUrl, {method:'POST', body:JSON.stringify(payload)});
+    // Use no-cors for write (fire and forget)
+    await fetch(gasUrl, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body:JSON.stringify(payload)});
     return true;
-  }catch(e){console.warn('GAS error',e);return false;}
+  }catch(e){console.warn('GAS post error',e);return false;}
+}
+async function testConn(){
+  if(!gasUrl){showToast('⚠️ 請先填入 Web App 網址');return;}
+  showToast('⟳ 測試連線中...');
+  try{
+    const data = await gasJsonp(gasUrl+'?sheet=itinerary&action=ping', '_gasTest');
+    document.getElementById('connDot').style.background='#6b8f71';
+    document.getElementById('connMsg').textContent='✅ 連線成功！Apps Script 運作正常';
+    document.getElementById('shSt').textContent='📊 已連線';
+    showToast('✅ 連線成功');
+  }catch(e){
+    document.getElementById('connDot').style.background='#c0392b';
+    document.getElementById('connMsg').textContent='❌ 連線失敗：請確認已重新部署且存取設為「所有人」';
+    showToast('❌ 連線失敗');
+  }
 }
 async function syncSheets(){
   if(!gasUrl){showToast('⚠️ 請先填入 Web App 網址');return;}
   showToast('⟳ 同步中...');
-  try{
-    const evRows = trips[curTrip].days.flatMap((d,di)=>
-      d.events.map(ev=>[ev.id,trips[curTrip].id,di+1,ev.time,ev.cat,ev.name,ev.note||'',ev.hasCost?1:0,ev.amount||0,ev.currency])
-    );
-    await gasPost({sheet:'itinerary',action:'write',rows:evRows});
-    const bRows = budgetItems.map(b=>[b.id,trips[curTrip].id,b.name,b.amount,b.currency,b.cat]);
-    await gasPost({sheet:'budget',action:'write',rows:bRows});
-    document.getElementById('syncSt').textContent='同步：'+new Date().toLocaleTimeString('zh-TW');
-    showToast('✅ 同步完成，共'+evRows.length+'筆');
-  }catch(e){showToast('❌ 同步失敗：'+e.message);}
+  const evRows = trips[curTrip].days.flatMap((d,di)=>
+    d.events.map(ev=>[ev.id,trips[curTrip].id,di+1,ev.time,ev.cat,ev.name,ev.note||'',ev.hasCost?1:0,ev.amount||0,ev.currency])
+  );
+  const bRows = budgetItems.map(b=>[b.id,trips[curTrip].id,b.name,b.amount,b.currency,b.cat]);
+  await gasPost({sheet:'itinerary',action:'write',rows:evRows});
+  await gasPost({sheet:'budget',action:'write',rows:bRows});
+  document.getElementById('syncSt').textContent='同步：'+new Date().toLocaleTimeString('zh-TW');
+  showToast('✅ 已送出同步，共'+evRows.length+'筆（稍候查看試算表確認）');
 }
 async function loadFromSH(){
   if(!gasUrl){showToast('⚠️ 請先填入 Web App 網址');return;}
   showToast('📥 讀取中...');
   try{
-    const r = await fetch(gasUrl+'?sheet=itinerary');
-    const rows = await r.json();
+    const rows = await gasJsonp(gasUrl+'?sheet=itinerary', '_gasLoad');
     if(!Array.isArray(rows)||rows.length<2){showToast('📋 試算表尚無資料');return;}
     trips[curTrip].days.forEach(d=>d.events=[]);
-    rows.slice(1).forEach(row=>{
-      const[id,,dayIdx,time,cat,name,note,hasCost,amount,currency]=row;
+    rows.slice(1).forEach(function(row){
+      const id=row[0],dayIdx=row[2],time=row[3],cat=row[4],name=row[5],note=row[6],hasCost=row[7],amount=row[8],currency=row[9];
       const di=Math.max(0,(parseInt(dayIdx)||1)-1);
       while(trips[curTrip].days.length<=di)
         trips[curTrip].days.push({label:'第'+(trips[curTrip].days.length+1)+'天',date:'—',events:[]});
