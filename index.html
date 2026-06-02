@@ -442,9 +442,10 @@ function doPost(e) {
     <input type="hidden" id="renameIdx">
     <div class="form-row"><label class="fl">行程名稱</label><input type="text" class="fi" id="renameVal" placeholder="例：🗼 東京 2025"></div>
     <div class="row2">
-      <div class="form-row"><label class="fl">出發日期</label><input type="date" class="fi" id="renameStart"></div>
-      <div class="form-row"><label class="fl">回程日期</label><input type="date" class="fi" id="renameEnd"></div>
+      <div class="form-row"><label class="fl">出發日期</label><input type="date" class="fi" id="renameStart" oninput="previewDays()"></div>
+      <div class="form-row"><label class="fl">回程日期</label><input type="date" class="fi" id="renameEnd" oninput="previewDays()"></div>
     </div>
+    <div id="daysPreview" style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);padding:8px 10px;background:var(--cream);border-radius:6px;margin-bottom:10px;display:none"></div>
     <div class="form-row"><label class="fl">目的地（英文，天氣&地圖用）</label><input type="text" class="fi" id="renameDest" placeholder="例：Tokyo / Rome"></div>
     <div class="m-acts"><button class="btn-cancel" onclick="closeM()">取消</button><button class="btn-save" onclick="saveRename()">儲存更新</button></div>
   </div>
@@ -454,9 +455,10 @@ function doPost(e) {
     <div class="modal-title">建立新行程</div>
     <div class="form-row"><label class="fl">行程名稱</label><input type="text" class="fi" id="tName" placeholder="例：京都賞楓之旅"></div>
     <div class="row2">
-      <div class="form-row"><label class="fl">出發日期</label><input type="date" class="fi" id="tStart"></div>
-      <div class="form-row"><label class="fl">回程日期</label><input type="date" class="fi" id="tEnd"></div>
+      <div class="form-row"><label class="fl">出發日期</label><input type="date" class="fi" id="tStart" oninput="previewNewDays()"></div>
+      <div class="form-row"><label class="fl">回程日期</label><input type="date" class="fi" id="tEnd" oninput="previewNewDays()"></div>
     </div>
+    <div id="newDaysPreview" style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);padding:8px 10px;background:var(--cream);border-radius:6px;margin-bottom:10px;display:none"></div>
     <div class="row2">
       <div class="form-row"><label class="fl">目的地（英文）</label><input type="text" class="fi" id="tDest" placeholder="例：Tokyo / Rome"></div>
       <div class="form-row"><label class="fl">同行人數</label><input type="number" class="fi" id="tPpl" value="2" min="1"></div>
@@ -535,6 +537,20 @@ function doPost(e) {
     <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--sage);text-align:center;padding:12px;background:var(--cream);border-radius:7px;margin-bottom:6px" id="spRes">¥ —</div>
     <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:2px;color:var(--muted);text-align:center;margin-bottom:14px">每人分攤</div>
     <div class="m-acts"><button class="btn-cancel" onclick="closeM()">關閉</button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="modal-copyEvent">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-title">⧉ 複製行程項目</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px">複製「<strong id="copyEvName"></strong>」到：</div>
+    <div class="form-row">
+      <label class="fl">目標天數</label>
+      <select class="fi" id="copyEvDaySelect"></select>
+    </div>
+    <div class="m-acts">
+      <button class="btn-cancel" onclick="closeM()">取消</button>
+      <button class="btn-save" onclick="confirmCopyEvent()">確定複製</button>
+    </div>
   </div>
 </div>
 <div class="modal-overlay" id="modal-confirm">
@@ -634,10 +650,40 @@ function delTrip(i){
   curTrip=Math.min(curTrip,trips.length-1);curDay=0;
   renderTrips();renderDays();renderTimeline();renderOverview();renderBudget();showToast('🗑 行程已刪除');
 }
+function previewNewDays(){
+  var start=document.getElementById('tStart').value;
+  var end=document.getElementById('tEnd').value;
+  var el=document.getElementById('newDaysPreview');
+  if(!start||!end){el.style.display='none';return;}
+  var s=new Date(start),e=new Date(end);
+  if(isNaN(s)||isNaN(e)||e<s){el.style.display='none';return;}
+  var days=Math.round((e-s)/864e5)+1;
+  var dates=[];
+  for(var i=0;i<Math.min(days,7);i++){
+    var d=new Date(s);d.setDate(s.getDate()+i);
+    dates.push((d.getMonth()+1).toString().padStart(2,'0')+'/'+(d.getDate()).toString().padStart(2,'0'));
+  }
+  if(days>7) dates.push('...');
+  el.style.display='block';
+  el.textContent='共 '+days+' 天：'+dates.join('、');
+}
 function saveTrip(){
   const name=document.getElementById('tName').value.trim();if(!name){alert('請輸入名稱');return;}
-  trips.push({id:nid++,name:'✈️ '+name,dest:document.getElementById('tDest').value,start:document.getElementById('tStart').value,end:document.getElementById('tEnd').value,days:[{label:'第 1 天',date:'—',events:[]}]});
-  closeM();switchTrip(trips.length-1);showToast('🗾 新行程已建立');
+  const start=document.getElementById('tStart').value;
+  const end=document.getElementById('tEnd').value;
+  const days=[];
+  if(start&&end){
+    const s=new Date(start),e=new Date(end);
+    if(!isNaN(s)&&!isNaN(e)&&e>=s){
+      const total=Math.round((e-s)/864e5)+1;
+      for(var i=0;i<total;i++){
+        days.push({label:'第 '+(i+1)+' 天',date:calcDayDate(start,i),events:[]});
+      }
+    }
+  }
+  if(!days.length) days.push({label:'第 1 天',date:calcDayDate(start,0)||'—',events:[]});
+  trips.push({id:nid++,name:'✈️ '+name,dest:document.getElementById('tDest').value,start:start,end:end,days:days});
+  closeM();switchTrip(trips.length-1);showToast('🗾 新行程已建立（'+days.length+'天）');
 }
 function openRename(i){
   document.getElementById('renameIdx').value=i;
@@ -647,12 +693,58 @@ function openRename(i){
   document.getElementById('renameEnd').value=trips[i].end||'';
   document.getElementById('modal-renameTrip').classList.add('open');
 }
+function previewDays(){
+  var start=document.getElementById('renameStart').value;
+  var end=document.getElementById('renameEnd').value;
+  var el=document.getElementById('daysPreview');
+  if(!start||!end){el.style.display='none';return;}
+  var s=new Date(start),e=new Date(end);
+  if(isNaN(s)||isNaN(e)||e<s){el.style.display='none';return;}
+  var days=Math.round((e-s)/864e5)+1;
+  var dates=[];
+  for(var i=0;i<days;i++){
+    var d=new Date(s);d.setDate(s.getDate()+i);
+    dates.push((d.getMonth()+1).toString().padStart(2,'0')+'/'+(d.getDate()).toString().padStart(2,'0'));
+  }
+  el.style.display='block';
+  el.textContent='共 '+days+' 天：'+dates.join('、');
+}
 function saveRename(){
   const i=parseInt(document.getElementById('renameIdx').value);
   const name=document.getElementById('renameVal').value.trim();if(!name){alert('請輸入名稱');return;}
-  trips[i].name=name;trips[i].dest=document.getElementById('renameDest').value.trim();
-  trips[i].start=document.getElementById('renameStart').value;trips[i].end=document.getElementById('renameEnd').value;
-  recalcDayDates();closeM();renderTrips();renderDays();renderTimeline();renderOverview();updateMaps();autoWeather();showToast('✅ 行程資訊已更新');
+  const start=document.getElementById('renameStart').value;
+  const end=document.getElementById('renameEnd').value;
+  trips[i].name=name;
+  trips[i].dest=document.getElementById('renameDest').value.trim();
+  trips[i].start=start;
+  trips[i].end=end;
+  // Auto generate days based on date range
+  if(start&&end){
+    const s=new Date(start),e=new Date(end);
+    if(!isNaN(s)&&!isNaN(e)&&e>=s){
+      const totalDays=Math.round((e-s)/864e5)+1;
+      const existing=trips[i].days||[];
+      // Keep existing days' events, add or trim days
+      while(trips[i].days.length<totalDays){
+        const n=trips[i].days.length+1;
+        const date=calcDayDate(start,trips[i].days.length);
+        trips[i].days.push({label:'第 '+n+' 天',date:date,events:[]});
+      }
+      // Trim extra days (warn if they have events)
+      if(trips[i].days.length>totalDays){
+        const extra=trips[i].days.slice(totalDays);
+        const hasEvents=extra.some(function(d){return d.events&&d.events.length>0;});
+        if(hasEvents){
+          if(!confirm('縮短天數後，第'+(totalDays+1)+'天以後的行程會被刪除，確定嗎？'))return;
+        }
+        trips[i].days=trips[i].days.slice(0,totalDays);
+      }
+    }
+  }
+  recalcDayDates();
+  if(curTrip===i&&curDay>=trips[i].days.length) curDay=trips[i].days.length-1;
+  closeM();renderTrips();renderDays();renderTimeline();renderOverview();updateMaps();autoWeather();
+  showToast('✅ 行程資訊已更新（'+trips[i].days.length+'天）');
 }
 
 // DAYS
@@ -804,7 +896,21 @@ function saveEvent(){
   closeM();renderTimeline();renderOverview();renderBudget();showToast(eid?'✏️ 已更新':'✅ 已新增');
 }
 function delEvent(id){
-  for(const d of trips[curTrip].days)d.events=d.events.filter(e=>e.id!==id);
+  // Search all days in current trip
+  var found=false;
+  trips[curTrip].days.forEach(function(d){
+    var before=d.events.length;
+    d.events=d.events.filter(function(e){return e.id!==id;});
+    if(d.events.length<before) found=true;
+  });
+  if(!found){
+    // Fallback: search all trips
+    trips.forEach(function(t){
+      t.days.forEach(function(d){
+        d.events=d.events.filter(function(e){return e.id!==id;});
+      });
+    });
+  }
   closeM();renderTimeline();renderBudget();renderOverview();showToast('🗑 已刪除');
 }
 function toggleCost(){document.getElementById('costFlds').classList.toggle('show',document.getElementById('costTgl').checked);}
@@ -1156,6 +1262,13 @@ const ks=document.createElement('style');ks.textContent='@keyframes fadeUp{from{
 
 // OVERVIEW TOGGLE
 function delBudgetConfirm(id){var items=getBudgetItems();var b=items.find(x=>x.id===id);if(!b)return;confirmDel(b.name,function(){var tid=trips[curTrip].id;budgetItemsMap[tid]=budgetItemsMap[tid].filter(x=>x.id!==id);renderBudget();});}
+function delEventConfirm(id){
+  var ev=null;
+  trips[curTrip].days.forEach(function(d){d.events.forEach(function(e){if(e.id===id)ev=e;});});
+  if(!ev) trips.forEach(function(t){t.days.forEach(function(d){d.events.forEach(function(e){if(e.id===id)ev=e;});});});
+  if(!ev){showToast('⚠️ 找不到此行程項目');return;}
+  confirmDel('「'+ev.name+'」',function(){delEvent(id);});
+}
 function delDayConfirm(di){confirmDel("第"+(di+1)+"天",()=>delDay(di));}
 function addEvForDay(di){curDay=di;renderDays();openM("addEvent");}
 function toggleOvDay(h){var b=h.nextElementSibling;b.style.display=b.style.display==="none"?"block":"none";}
@@ -1248,14 +1361,35 @@ function applyLib(i){
   document.getElementById('libSuggest').innerHTML='';
 }
 
-// COPY EVENT
+// COPY EVENT - with day selection
+var _copyEvSrc=null;
 function copyEvent(id){
-  var src=trips[curTrip].days.flatMap(function(d){return d.events;}).find(function(e){return e.id===id;});
+  var src=null;
+  trips[curTrip].days.forEach(function(d){d.events.forEach(function(e){if(e.id===id)src=e;});});
   if(!src)return;
-  var copy=Object.assign({},src,{id:nid++,name:src.name+' (複製)'});
-  trips[curTrip].days[curDay].events.push(copy);
+  _copyEvSrc=src;
+  // Build day options
+  var opts=trips[curTrip].days.map(function(d,i){
+    return '<option value="'+i+'">'+(d.label||'第'+(i+1)+'天')+' '+d.date+(i===curDay?' (目前)':'')+'</option>';
+  }).join('');
+  document.getElementById('copyEvName').textContent=src.name;
+  document.getElementById('copyEvDaySelect').innerHTML=opts;
+  document.getElementById('copyEvDaySelect').value=curDay;
+  document.getElementById('modal-copyEvent').classList.add('open');
+}
+function confirmCopyEvent(){
+  if(!_copyEvSrc)return;
+  var targetDay=parseInt(document.getElementById('copyEvDaySelect').value);
+  var copy=JSON.parse(JSON.stringify(_copyEvSrc));
+  copy.id=nid++;
+  if(targetDay===curDay) copy.name=copy.name+' (複製)';
+  trips[curTrip].days[targetDay].events.push(copy);
+  _copyEvSrc=null;
+  closeM();
+  // Switch to target day if different
+  if(targetDay!==curDay){curDay=targetDay;renderDays();}
   renderTimeline();renderOverview();
-  showToast('⧉ 已複製「'+src.name+'」');
+  showToast('⧉ 已複製到'+trips[curTrip].days[targetDay].label);
 }
 
 
@@ -1319,6 +1453,7 @@ if(csvId){
     loadFromSH().catch(function(){});
   }, 800);
 }
+
 </script>
 </body>
 </html>
