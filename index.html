@@ -448,11 +448,13 @@ function doPost(e) {
     <div class="modal-title" id="evTitle">新增行程項目</div>
     <input type="hidden" id="editEvId">
     <div class="row2">
-      <div class="form-row"><label class="fl">時間</label><input type="time" class="fi" id="fTime" value="09:00"></div>
+      <div class="form-row"><label class="fl">時間（選填）</label><input type="time" class="fi" id="fTime"></div>
       <div class="form-row"><label class="fl">類別</label><select class="fi" id="fCat"><option value="transport">✈️ 交通</option><option value="food">🍽 餐飲</option><option value="stay">🏨 住宿</option><option value="sight" selected>🎡 景點</option><option value="other">📦 其他</option></select></div>
     </div>
     <div class="form-row"><label class="fl">名稱</label><input type="text" class="fi" id="fName" placeholder="例：淺草寺參觀"></div>
     <div class="form-row"><label class="fl">備註（選填）</label><input type="text" class="fi" id="fNote" placeholder="票價、訂位資訊..."></div>
+    <div class="form-row"><label class="fl">Google Maps 網址（選填）</label><input type="text" class="fi" id="fMapUrl" placeholder="https://maps.google.com/..."></div>
+    <div class="form-row"><label class="fl">所屬天數</label><select class="fi" id="fDayIdx"></select></div>
     <label class="cost-tgl"><input type="checkbox" id="costTgl" onchange="toggleCost()"> 記錄費用（自動計入預算）</label>
     <div class="cost-flds" id="costFlds">
       <div class="form-row"><label class="fl">金額</label><input type="number" class="fi" id="fAmt" placeholder="0" min="0"></div>
@@ -533,7 +535,7 @@ const MQ={Tokyo:'Tokyo+Japan',Rome:'Rome+Italy',Reykjavik:'Reykjavik+Iceland',Ky
 let trips=[
   {id:1,name:'🗼 東京 2025',dest:'Tokyo',start:'2025-09-15',end:'2025-09-22',days:[
     {label:'第 1 天',date:'09/15',events:[
-      {id:1,time:'08:30',cat:'transport',name:'台北 → 東京 CI108',note:'TPE → NRT',hasCost:true,amount:16000,currency:'TWD'},
+      {id:1,time:'08:30',cat:'transport',name:'台北 → 東京 CI108',note:'TPE → NRT',hasCost:true,amount:16000,currency:'TWD',mapUrl:''},
       {id:2,time:'14:00',cat:'transport',name:"成田特快 N'EX",note:'前往新宿',hasCost:true,amount:3070,currency:'JPY'},
       {id:3,time:'16:30',cat:'stay',name:'新宿 Granbell Hotel',note:'Check-in',hasCost:true,amount:8000,currency:'JPY'},
       {id:4,time:'19:00',cat:'food',name:'一蘭拉麵新宿店',note:'推薦：原味豚骨',hasCost:true,amount:890,currency:'JPY'}
@@ -624,13 +626,16 @@ function renderTimeline(){
   const evs=trips[curTrip].days[curDay].events;
   const el=document.getElementById('timeline');
   if(!evs.length){el.innerHTML='<div class="empty">尚無行程<br><small>點「＋新增」加入景點、交通、住宿</small></div>';updateStats();return;}
-  el.innerHTML=[...evs].sort((a,b)=>a.time.localeCompare(b.time)).map((ev,idx)=>{
+  const sorted=[...evs].sort((a,b)=>{if(!a.time&&!b.time)return 0;if(!a.time)return 1;if(!b.time)return -1;return a.time.localeCompare(b.time);});
+  el.innerHTML=sorted.map((ev,idx)=>{
     const c=CAT[ev.cat];
     const ch=ev.hasCost&&ev.amount?'<span class="cost-tag">'+(SYM[ev.currency]||'')+Number(ev.amount).toLocaleString()+'</span>':'';
-    return '<div class="ev" style="animation:fadeUp .3s '+idx*.04+'s both">'+
-      '<div class="ev-time">'+ev.time+'</div><div class="ev-icon">'+c.i+'</div>'+
+    const mh=ev.mapUrl?'<a href="'+ev.mapUrl+'" target="_blank" style="font-size:10px;color:var(--sky);display:inline-block;margin-top:2px">🗺 查看地圖</a>':'';
+    return '<div class="ev" draggable="true" data-id="'+ev.id+'" style="animation:fadeUp .3s '+(idx*0.04)+'s both" ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="dragDrop(event)" ondragend="dragEnd(event)">'+
+      '<div style="cursor:grab;color:var(--muted);font-size:14px;padding:0 4px;flex-shrink:0">⠿</div>'+
+      '<div class="ev-time">'+(ev.time||'—')+'</div><div class="ev-icon">'+c.i+'</div>'+
       '<div class="ev-body"><div class="ev-name">'+ev.name+'</div>'+(ev.note?'<div class="ev-note">'+ev.note+'</div>':'')+
-      '<div class="ev-meta"><span class="ev-tag '+c.cls+'">'+c.l+'</span>'+ch+'</div></div>'+
+      mh+'<div class="ev-meta"><span class="ev-tag '+c.cls+'">'+c.l+'</span>'+ch+'</div></div>'+
       '<div class="ev-acts"><button class="ib" onclick="editEvent('+ev.id+')">✏️</button>'+
       '<button class="ib del" onclick="delEventConfirm('+ev.id+')">🗑</button></div></div>';
   }).join('');
@@ -645,16 +650,31 @@ function updateStats(){
 }
 
 // MODALS
+function renderDaySelect(){
+  const sel=document.getElementById('fDayIdx');
+  if(!sel)return;
+  const days=trips[curTrip].days;
+  sel.innerHTML=days.map((d,i)=>'<option value="'+i+'">'+(d.label||'第'+(i+1)+'天')+' '+d.date+'</option>').join('');
+  if(sel.value===''||sel.value===undefined)sel.value=curDay;
+}
 function openM(name){
   closeM();
   const el=document.getElementById('modal-'+name);
   if(el)el.classList.add('open');
   if(name==='addEvent'){
     document.getElementById('evTitle').textContent='新增行程項目';
-    document.getElementById('editEvId').value='';document.getElementById('fTime').value='09:00';
-    document.getElementById('fCat').value='sight';document.getElementById('fName').value='';
-    document.getElementById('fNote').value='';document.getElementById('costTgl').checked=false;
-    document.getElementById('fAmt').value='';document.getElementById('fCurr').value='JPY';toggleCost();
+    document.getElementById('editEvId').value='';
+    document.getElementById('fTime').value='';
+    document.getElementById('fCat').value='sight';
+    document.getElementById('fName').value='';
+    document.getElementById('fNote').value='';
+    document.getElementById('fMapUrl').value='';
+    document.getElementById('fDayIdx').value=curDay;
+    renderDaySelect();
+    document.getElementById('costTgl').checked=false;
+    document.getElementById('fAmt').value='';
+    document.getElementById('fCurr').value='JPY';
+    toggleCost();
   }
   if(name==='currency')calcCurr();
   if(name==='weather'){document.getElementById('wxCity').value=trips[curTrip].dest||'';if(wxKey)document.getElementById('wxKey').value=wxKey;}
@@ -664,21 +684,50 @@ document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click
 
 function editEvent(id){
   const ev=trips[curTrip].days.flatMap(d=>d.events).find(e=>e.id===id);if(!ev)return;
+  const di=trips[curTrip].days.findIndex(d=>d.events.some(e=>e.id===id));
   document.getElementById('evTitle').textContent='編輯行程項目';
-  document.getElementById('editEvId').value=id;document.getElementById('fTime').value=ev.time;
-  document.getElementById('fCat').value=ev.cat;document.getElementById('fName').value=ev.name;
-  document.getElementById('fNote').value=ev.note||'';document.getElementById('costTgl').checked=!!ev.hasCost;
-  document.getElementById('fAmt').value=ev.amount||'';document.getElementById('fCurr').value=ev.currency||'JPY';
+  document.getElementById('editEvId').value=id;
+  document.getElementById('fTime').value=ev.time||'';
+  document.getElementById('fCat').value=ev.cat;
+  document.getElementById('fName').value=ev.name;
+  document.getElementById('fNote').value=ev.note||'';
+  document.getElementById('fMapUrl').value=ev.mapUrl||'';
+  document.getElementById('fDayIdx').value=di>=0?di:curDay;
+  renderDaySelect();
+  document.getElementById('costTgl').checked=!!ev.hasCost;
+  document.getElementById('fAmt').value=ev.amount||'';
+  document.getElementById('fCurr').value=ev.currency||'JPY';
   toggleCost();document.getElementById('modal-addEvent').classList.add('open');
 }
 function saveEvent(){
   const name=document.getElementById('fName').value.trim();if(!name){alert('請輸入名稱');return;}
   const hasCost=document.getElementById('costTgl').checked,eid=document.getElementById('editEvId').value;
-  const ev={id:eid?Number(eid):nid++,time:document.getElementById('fTime').value,cat:document.getElementById('fCat').value,name,note:document.getElementById('fNote').value.trim(),hasCost,amount:hasCost?Number(document.getElementById('fAmt').value)||0:0,currency:document.getElementById('fCurr').value};
-  if(eid){for(const d of trips[curTrip].days){const i=d.events.findIndex(e=>e.id===Number(eid));if(i!==-1){d.events[i]=ev;break;}}}
-  else trips[curTrip].days[curDay].events.push(ev);
+  const timeVal=document.getElementById('fTime').value;
+  const ev={
+    id:eid?Number(eid):nid++,
+    time:timeVal||'',
+    cat:document.getElementById('fCat').value,
+    name,
+    note:document.getElementById('fNote').value.trim(),
+    mapUrl:document.getElementById('fMapUrl').value.trim(),
+    hasCost,
+    amount:hasCost?Number(document.getElementById('fAmt').value)||0:0,
+    currency:document.getElementById('fCurr').value,
+    dayIdx:Number(document.getElementById('fDayIdx').value)
+  };
+  // Handle day change
+  if(eid){
+    // Remove from old day
+    for(const d of trips[curTrip].days){
+      const i=d.events.findIndex(e=>e.id===Number(eid));
+      if(i!==-1){d.events.splice(i,1);break;}
+    }
+  }
+  // Add to target day
+  const targetDay=ev.dayIdx>=0&&ev.dayIdx<trips[curTrip].days.length?ev.dayIdx:curDay;
+  trips[curTrip].days[targetDay].events.push(ev);
+  if(targetDay!==curDay){curDay=targetDay;renderDays();}
   closeM();renderTimeline();renderOverview();renderBudget();showToast(eid?'✏️ 已更新':'✅ 已新增');
-  if(gapiOK&&gcSID)writeEv(ev);
 }
 function delEvent(id){
   for(const d of trips[curTrip].days)d.events=d.events.filter(e=>e.id!==id);
@@ -862,14 +911,19 @@ async function testConn(){
 async function syncSheets(){
   if(!gasUrl){showToast('⚠️ 請先填入 Web App 網址');return;}
   showToast('⟳ 同步中...');
+  // Sync all trips
+  const tripRows = trips.map(t=>[t.id,t.name,t.dest||'',t.start||'',t.end||'',t.days?t.days.length:1]);
+  await gasPost({sheet:'trips',action:'write',rows:tripRows});
+  // Sync current trip events
   const evRows = trips[curTrip].days.flatMap((d,di)=>
-    d.events.map(ev=>[ev.id,trips[curTrip].id,di+1,ev.time,ev.cat,ev.name,ev.note||'',ev.hasCost?1:0,ev.amount||0,ev.currency])
+    d.events.map(ev=>[ev.id,trips[curTrip].id,di+1,ev.time||'',ev.cat,ev.name,ev.note||'',ev.hasCost?1:0,ev.amount||0,ev.currency,ev.mapUrl||''])
   );
-  const bRows = budgetItems.map(b=>[b.id,trips[curTrip].id,b.name,b.amount,b.currency,b.cat]);
   await gasPost({sheet:'itinerary',action:'write',rows:evRows});
+  // Sync budget
+  const bRows = budgetItems.map(b=>[b.id,trips[curTrip].id,b.name,b.amount,b.currency,b.cat]);
   await gasPost({sheet:'budget',action:'write',rows:bRows});
   document.getElementById('syncSt').textContent='同步：'+new Date().toLocaleTimeString('zh-TW');
-  showToast('✅ 已送出同步，共'+evRows.length+'筆');
+  showToast('✅ 同步完成');
 }
 function parseCSV(text){
   var nl=String.fromCharCode(10);
@@ -954,6 +1008,28 @@ function delBudgetConfirm(id){var b=budgetItems.find(x=>x.id===id);if(!b)return;
 function delDayConfirm(di){confirmDel("第"+(di+1)+"天",()=>delDay(di));}
 function addEvForDay(di){curDay=di;renderDays();openM("addEvent");}
 function toggleOvDay(h){var b=h.nextElementSibling;b.style.display=b.style.display==="none"?"block":"none";}
+
+
+// DRAG AND DROP
+var dragSrcId=null;
+function dragStart(e){dragSrcId=parseInt(e.currentTarget.dataset.id);e.currentTarget.style.opacity='0.4';}
+function dragOver(e){e.preventDefault();e.currentTarget.style.borderTop='2px solid var(--rust)';}
+function dragEnd(e){e.currentTarget.style.opacity='1';document.querySelectorAll('.ev').forEach(el=>{el.style.borderTop='';});}
+function dragDrop(e){
+  e.preventDefault();
+  var targetId=parseInt(e.currentTarget.dataset.id);
+  if(dragSrcId===targetId)return;
+  var evs=trips[curTrip].days[curDay].events;
+  var si=evs.findIndex(ev=>ev.id===dragSrcId);
+  var ti=evs.findIndex(ev=>ev.id===targetId);
+  if(si<0||ti<0)return;
+  var moved=evs.splice(si,1)[0];
+  evs.splice(ti,0,moved);
+  renderTimeline();
+}
+function initDrag(){
+  // Touch drag support placeholder
+}
 
 // INIT
 loadSHConfig();renderTrips();renderDays();renderTimeline();renderBudget();initCL();calcCurr();updateMaps();autoWeather();
