@@ -577,7 +577,7 @@ function renderTrips(){
       <span class="t-del" onclick="event.stopPropagation();confirmDel('行程「'+trips[${i}].name+'」',()=>delTrip(${i}))">✕</span>
     </button>`).join('');
 }
-function switchTrip(i){curTrip=i;curDay=0;renderTrips();renderDays();renderTimeline();renderOverview();renderBudget();autoWeather();updateMaps();closeSB();}
+function switchTrip(i){curTrip=i;curDay=0;recalcDayDates();renderTrips();renderDays();renderTimeline();renderOverview();renderBudget();autoWeather();updateMaps();closeSB();}
 function delTrip(i){
   trips.splice(i,1);
   if(!trips.length)trips=[{id:nid++,name:'✈️ 新行程',dest:'',start:'',end:'',days:[{label:'第 1 天',date:'—',events:[]}]}];
@@ -602,7 +602,7 @@ function saveRename(){
   const name=document.getElementById('renameVal').value.trim();if(!name){alert('請輸入名稱');return;}
   trips[i].name=name;trips[i].dest=document.getElementById('renameDest').value.trim();
   trips[i].start=document.getElementById('renameStart').value;trips[i].end=document.getElementById('renameEnd').value;
-  closeM();renderTrips();renderOverview();updateMaps();autoWeather();showToast('✅ 行程資訊已更新');
+  recalcDayDates();closeM();renderTrips();renderDays();renderTimeline();renderOverview();updateMaps();autoWeather();showToast('✅ 行程資訊已更新');
 }
 
 // DAYS
@@ -613,7 +613,23 @@ function renderDays(){
   document.getElementById('dayLabel').textContent=days[curDay].label+' · '+days[curDay].date;
 }
 function switchDay(i){curDay=i;renderDays();renderTimeline();}
-function addDay(){const t=trips[curTrip],n=t.days.length+1;t.days.push({label:'第 '+n+' 天',date:'—',events:[]});switchDay(t.days.length-1);showToast('📅 已新增第'+n+'天');}
+function addDay(){
+  const t=trips[curTrip],n=t.days.length+1;
+  const date=calcDayDate(t.start, n-1);
+  t.days.push({label:'第 '+n+' 天',date:date,events:[]});
+  switchDay(t.days.length-1);showToast('📅 已新增第'+n+'天');
+}
+function calcDayDate(startStr, offset){
+  if(!startStr)return '—';
+  const d=new Date(startStr);
+  if(isNaN(d.getTime()))return '—';
+  d.setDate(d.getDate()+offset);
+  return (d.getMonth()+1).toString().padStart(2,'0')+'/'+(d.getDate()).toString().padStart(2,'0');
+}
+function recalcDayDates(){
+  const t=trips[curTrip];
+  t.days.forEach((d,i)=>{d.date=calcDayDate(t.start,i);});
+}
 function delDay(di){
   if(trips[curTrip].days.length<=1){showToast('⚠️ 至少保留一天');return;}
   trips[curTrip].days.splice(di,1);
@@ -677,7 +693,12 @@ function openM(name){
     toggleCost();
   }
   if(name==='currency')calcCurr();
-  if(name==='weather'){document.getElementById('wxCity').value=trips[curTrip].dest||'';if(wxKey)document.getElementById('wxKey').value=wxKey;}
+  if(name==='weather'){
+    document.getElementById('wxCity').value=trips[curTrip].dest||'';
+    const savedKey=wxKey||localStorage.getItem('wx_key')||'';
+    document.getElementById('wxKey').value=savedKey;
+    if(savedKey)wxKey=savedKey;
+  }
 }
 function closeM(){document.querySelectorAll('.modal-overlay').forEach(m=>m.classList.remove('open'));}
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)closeM();}));
@@ -838,10 +859,19 @@ function initJsMap(){
 // WEATHER
 async function fetchWeather(){
   const key=document.getElementById('wxKey').value.trim();if(!key){alert('請輸入 API Key');return;}
-  wxKey=key;const city=document.getElementById('wxCity').value.trim()||trips[curTrip].dest||'Tokyo';
+  wxKey=key;
+  localStorage.setItem('wx_key',key);
+  const city=document.getElementById('wxCity').value.trim()||trips[curTrip].dest||'Tokyo';
   closeM();await getWx(key,city);
 }
-async function autoWeather(){if(!wxKey)return;await getWx(wxKey,trips[curTrip].dest||'Tokyo');}
+async function autoWeather(){
+  if(!wxKey){
+    const saved=localStorage.getItem('wx_key');
+    if(saved)wxKey=saved;
+    else return;
+  }
+  await getWx(wxKey,trips[curTrip].dest||'Tokyo');
+}
 async function getWx(key,city){
   const w=document.getElementById('wxW');
   w.innerHTML='<div style="font-size:12px;color:var(--muted);text-align:center;padding:8px">載入中...</div>';
@@ -1032,7 +1062,7 @@ function initDrag(){
 }
 
 // INIT
-loadSHConfig();renderTrips();renderDays();renderTimeline();renderBudget();initCL();calcCurr();updateMaps();autoWeather();
+loadSHConfig();recalcDayDates();renderTrips();renderDays();renderTimeline();renderBudget();initCL();calcCurr();updateMaps();autoWeather();
 </script>
 </body>
 </html>
