@@ -834,7 +834,9 @@ function loadSHConfig(){
 async function gasPost(payload){
   if(!gasUrl) return false;
   try{
-    await fetch(gasUrl, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body:JSON.stringify(payload)});
+    var form = new FormData();
+    form.append('data', JSON.stringify(payload));
+    await fetch(gasUrl, {method:'POST', mode:'no-cors', body:form});
     return true;
   }catch(e){console.warn('GAS post error',e);return false;}
 }
