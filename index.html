@@ -598,14 +598,7 @@ let trips=[
   {id:3,name:'🌌 冰島 2026',dest:'Reykjavik',start:'2026-08-20',end:'2026-08-27',days:[{label:'第 1 天',date:'08/20',events:[]}]}
 ];
 // budgetItems is now per-trip: {tripId: [...items]}
-let budgetItemsMap={
-  1:[
-    {id:1,name:'來回機票 × 4',amount:64000,currency:'TWD',cat:'transport'},
-    {id:2,name:'新宿 Granbell 8晚',amount:64000,currency:'JPY',cat:'stay'},
-    {id:3,name:'每日餐費（預估）',amount:16000,currency:'JPY',cat:'food'},
-    {id:4,name:'門票費用（預估）',amount:8500,currency:'JPY',cat:'sight'}
-  ]
-};
+let budgetItemsMap={};
 function getBudgetItems(){
   const tid=trips[curTrip].id;
   if(!budgetItemsMap[tid]) budgetItemsMap[tid]=[];
@@ -802,11 +795,26 @@ function renderTimeline(){
   updateStats();
 }
 function updateStats(){
-  const de=trips[curTrip].days[curDay].events,ae=trips[curTrip].days.flatMap(d=>d.events);
+  const de=trips[curTrip].days[curDay].events;
+  const ae=trips[curTrip].days.flatMap(function(d){return d.events;});
+  const bi=getBudgetItems();
   document.getElementById('stI').textContent=de.length;
-  document.getElementById('stD').textContent='¥'+de.filter(e=>e.hasCost&&e.currency==='JPY').reduce((s,e)=>s+Number(e.amount),0).toLocaleString();
-  document.getElementById('stT').textContent='¥'+ae.filter(e=>e.hasCost&&e.currency==='JPY').reduce((s,e)=>s+Number(e.amount),0).toLocaleString();
-  const t=trips[curTrip];if(t.start){const d=Math.ceil((new Date(t.start)-new Date())/864e5);document.getElementById('stDy').textContent=d>0?d:'出發！';}
+  // Day cost: events in current day (all currencies converted roughly)
+  const dayJPY=de.filter(function(e){return e.hasCost&&e.currency==='JPY';}).reduce(function(s,e){return s+Number(e.amount);},0);
+  const dayTWD=de.filter(function(e){return e.hasCost&&e.currency==='TWD';}).reduce(function(s,e){return s+Number(e.amount);},0);
+  document.getElementById('stD').textContent=(dayJPY?'¥'+dayJPY.toLocaleString():'')+(dayJPY&&dayTWD?' + ':'')+(dayTWD?'NT$'+dayTWD.toLocaleString():'') || '—';
+  // Total: all event costs + manual budget items
+  const evJPY=ae.filter(function(e){return e.hasCost&&e.currency==='JPY';}).reduce(function(s,e){return s+Number(e.amount);},0);
+  const evTWD=ae.filter(function(e){return e.hasCost&&e.currency==='TWD';}).reduce(function(s,e){return s+Number(e.amount);},0);
+  const biJPY=bi.filter(function(b){return b.currency==='JPY';}).reduce(function(s,b){return s+Number(b.amount);},0);
+  const biTWD=bi.filter(function(b){return b.currency==='TWD';}).reduce(function(s,b){return s+Number(b.amount);},0);
+  const totalJPY=evJPY+biJPY, totalTWD=evTWD+biTWD;
+  document.getElementById('stT').textContent=(totalJPY?'¥'+totalJPY.toLocaleString():'')+(totalJPY&&totalTWD?' + ':'')+(totalTWD?'NT$'+totalTWD.toLocaleString():'') || '—';
+  const t=trips[curTrip];
+  if(t.start){
+    const d=Math.ceil((new Date(t.start)-new Date())/864e5);
+    document.getElementById('stDy').textContent=d>0?d:'出發！';
+  }
 }
 
 // MODALS
