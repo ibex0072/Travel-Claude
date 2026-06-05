@@ -1271,7 +1271,7 @@ function showPage(name,el){
   if(el)el.classList.add('active');
   if(name==='overview')renderOverview();
   if(name==='budget')renderBudget();
-  if(name==='library')renderLibrary();
+  if(name==='library')setTimeout(function(){renderLibrary();},50);
   closeSB();
 }
 function showPageM(name,el){
@@ -1285,6 +1285,7 @@ function showPageM(name,el){
   if(name==='budget')renderBudget();
   if(name==='checklist')initCL();
   if(name==='map')updateMaps();
+  if(name==='library')setTimeout(function(){renderLibrary();},50);
 }
 
 // DARK MODE
