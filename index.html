@@ -418,6 +418,7 @@ function doPost(e) {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="add-btn" onclick="syncLibraryFromSheets().then(renderLibrary)">☁️ 從試算表讀取</button>
         <button class="btn-cancel" onclick="syncLibraryToSheets().then(()=>showToast('✅ 已同步到試算表'))">⬆️ 同步到試算表</button>
+        <button class="btn-cancel" onclick="importFromItinerary()">📥 從行程匯入</button>
         <button class="btn-cancel" onclick="clearLibrary()">🗑 清空</button>
       </div>
     </div>
@@ -1334,24 +1335,83 @@ function saveToLibrary(ev){
 function getLibrary(){
   return JSON.parse(localStorage.getItem('ev_library')||'[]');
 }
-async function syncLibraryFromSheets(){
-  if(!csvId) return;
-  try{
-    var rows=await fetchCSV('library');
-    if(rows.length<2) return;
-    var items=rows.slice(1).filter(function(r){return r[0];}).map(function(r){
-      return {name:r[0],cat:r[1]||'other',note:r[2]||'',mapUrl:r[3]||''};
+function importFromItinerary(){
+  var lib=JSON.parse(localStorage.getItem('ev_library')||'[]');
+  var libNames=new Set(lib.map(function(x){return x.name;}));
+  var added=0;
+  trips.forEach(function(t){
+    t.days.forEach(function(d){
+      d.events.forEach(function(ev){
+        if(ev.name&&!libNames.has(ev.name)){
+          lib.push({name:ev.name,cat:ev.cat||'other',note:ev.note||'',mapUrl:ev.mapUrl||''});
+          libNames.add(ev.name);
+          added++;
+        }
+      });
     });
-    // Merge with local - sheets takes priority, dedupe by name
-    var local=JSON.parse(localStorage.getItem('ev_library')||'[]');
-    var names=new Set(items.map(function(x){return x.name;}));
-    local.forEach(function(x){if(!names.has(x.name)){items.push(x);}});
-    localStorage.setItem('ev_library',JSON.stringify(items));
-    // Re-render if library page is open
-    var libPage=document.getElementById('page-library');
-    if(libPage&&libPage.classList.contains('active')) renderLibrary();
-    showToast('📚 記憶庫已同步（'+items.length+'筆）');
-  }catch(e){console.warn('Library sync failed',e);}
+  });
+  localStorage.setItem('ev_library',JSON.stringify(lib));
+  renderLibrary();
+  showToast('📥 已從行程匯入 '+added+' 筆到記憶庫');
+}
+async function syncLibraryFromSheets(){
+  // Try Apps Script first (more reliable), fallback to CSV
+  if(gasUrl){
+    try{
+      await _syncLibViaGAS();
+      return;
+    }catch(e){console.warn('GAS library sync failed, trying CSV',e);}
+  }
+  if(csvId){
+    try{
+      await _syncLibViaCSV();
+      return;
+    }catch(e){console.warn('CSV library sync failed',e);}
+  }
+  showToast('⚠️ 請先設定 Apps Script 網址或試算表 ID');
+}
+async function _syncLibViaGAS(){
+  // Use JSONP via script tag to read library from Apps Script
+  return new Promise(function(resolve, reject){
+    var cbName='_libCb'+Date.now();
+    var sc=document.createElement('script');
+    var done=false;
+    window[cbName]=function(data){
+      done=true;
+      delete window[cbName];
+      sc.remove();
+      if(!Array.isArray(data)||data.length<2){resolve();return;}
+      var items=data.slice(1).filter(function(r){return r[0];}).map(function(r){
+        return {name:String(r[0]),cat:String(r[1]||'other'),note:String(r[2]||''),mapUrl:String(r[3]||'')};
+      });
+      var local=JSON.parse(localStorage.getItem('ev_library')||'[]');
+      var names=new Set(items.map(function(x){return x.name;}));
+      local.forEach(function(x){if(!names.has(x.name)){items.push(x);}});
+      localStorage.setItem('ev_library',JSON.stringify(items));
+      var libPage=document.getElementById('page-library');
+      if(libPage&&libPage.classList.contains('active')) renderLibrary();
+      showToast('📚 記憶庫已同步（'+items.length+'筆）');
+      resolve();
+    };
+    sc.onerror=function(){if(!done){delete window[cbName];sc.remove();reject(new Error('script error'));}};
+    sc.src=gasUrl+'?sheet=library&callback='+cbName;
+    document.head.appendChild(sc);
+    setTimeout(function(){if(!done){delete window[cbName];sc.remove();reject(new Error('timeout'));}},8000);
+  });
+}
+async function _syncLibViaCSV(){
+  var rows=await fetchCSV('library');
+  if(rows.length<2) return;
+  var items=rows.slice(1).filter(function(r){return r[0];}).map(function(r){
+    return {name:r[0],cat:r[1]||'other',note:r[2]||'',mapUrl:r[3]||''};
+  });
+  var local=JSON.parse(localStorage.getItem('ev_library')||'[]');
+  var names=new Set(items.map(function(x){return x.name;}));
+  local.forEach(function(x){if(!names.has(x.name)){items.push(x);}});
+  localStorage.setItem('ev_library',JSON.stringify(items));
+  var libPage=document.getElementById('page-library');
+  if(libPage&&libPage.classList.contains('active')) renderLibrary();
+  showToast('📚 記憶庫已同步（'+items.length+'筆）');
 }
 async function syncLibraryToSheets(){
   if(!gasUrl) return;
