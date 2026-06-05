@@ -423,7 +423,8 @@ function doPost(e) {
     </div>
     <div style="font-size:13px;color:var(--muted);margin-bottom:16px;padding:12px;background:var(--cream);border-radius:8px;line-height:1.8">
       新增行程項目時<strong>自動儲存</strong>到記憶庫，並同步到 Google 試算表 <code>library</code> 工作表。<br>
-      下次新增時，在名稱欄輸入關鍵字即可快速帶入 ✅ 跨裝置同步
+      下次新增時，在名稱欄輸入關鍵字即可快速帶入 ✅ 跨裝置同步<br>
+      <span id="libCount" style="font-family:'DM Mono',monospace;font-size:11px"></span>
     </div>
     <div id="libraryList" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px"></div>
   </div>
@@ -1165,6 +1166,10 @@ async function fetchCSV(sheet){
   const r=await fetch(url);
   if(!r.ok) throw new Error('HTTP '+r.status+' — 請確認試算表已開放「知道連結的人可以檢視」');
   const text=await r.text();
+  // Check if response is error HTML (wrong sheet name)
+  if(text.trim().startsWith('<')){
+    throw new Error('找不到工作表「'+sheet+'」，請確認名稱正確');
+  }
   return parseCSV(text);
 }
 async function loadFromSH(){
@@ -1342,7 +1347,10 @@ async function syncLibraryFromSheets(){
     var names=new Set(items.map(function(x){return x.name;}));
     local.forEach(function(x){if(!names.has(x.name)){items.push(x);}});
     localStorage.setItem('ev_library',JSON.stringify(items));
-    showToast('📚 記憶庫已從試算表同步（'+items.length+'筆）');
+    // Re-render if library page is open
+    var libPage=document.getElementById('page-library');
+    if(libPage&&libPage.classList.contains('active')) renderLibrary();
+    showToast('📚 記憶庫已同步（'+items.length+'筆）');
   }catch(e){console.warn('Library sync failed',e);}
 }
 async function syncLibraryToSheets(){
@@ -1432,9 +1440,11 @@ function confirmCopyEvent(){
 
 function renderLibrary(){
   var lib=getLibrary();
+  var cnt=document.getElementById('libCount');
+  if(cnt) cnt.textContent='目前共 '+lib.length+' 筆';
   var el=document.getElementById('libraryList');
   if(!lib.length){
-    el.innerHTML='<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;font-size:13px">尚無記憶資料<br><small>新增行程項目後會自動儲存</small></div>';
+    el.innerHTML='<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;font-size:13px">尚無記憶資料<br><small>點上方「☁️ 從試算表讀取」或新增行程項目後會自動儲存</small></div>';
     return;
   }
   el.innerHTML=lib.map(function(item,i){
